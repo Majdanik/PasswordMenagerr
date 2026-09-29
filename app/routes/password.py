@@ -1,11 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Body, status
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from database import get_db
-from models.password import PasswordEntry
-from models.user import User
-from schemas.password import PasswordCreate, PasswordOut
-from security import encrypt_text, decrypt_text, get_current_user
-from cryptography.fernet import Fernet, InvalidToken
+from app.database import get_db
+from app.models.password import PasswordEntry
+from app.models.user import User
+from app.schemas.password import PasswordCreate, PasswordOut
+from app.security import get_current_user
 
 router = APIRouter(prefix="/passwords", tags=["passwords"])
 
@@ -15,7 +14,7 @@ def get_user_passwords(user_id: int, db: Session):
     return db.query(PasswordEntry).filter(PasswordEntry.user_id == user_id).all()
 
 
-# 🔹 Pobierz wszystkie hasła użytkownika (domyślnie zaszyfrowane)
+# 🔹 Pobierz wszystkie hasła użytkownika (opaque ciphertext)
 @router.get("", response_model=list[PasswordOut])
 def get_passwords(
     current_user: User = Depends(get_current_user),
@@ -27,25 +26,24 @@ def get_passwords(
             id=it.id,
             service=it.service,
             login=it.login,
-            password=it.password  # zwracamy ZASZYFROWANE
+            password=it.password
         )
         for it in items
     ]
 
 
-# 🔹 Dodaj nowe hasło
+# 🔹 Dodaj nowe hasło (ciphertext gotowy z przeglądarki)
 @router.post("", response_model=PasswordOut)
 def add_password(
     password: PasswordCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    encrypted_password = encrypt_text(password.password)
     new_entry = PasswordEntry(
         user_id=current_user.id,
         service=password.service,
         login=password.login,
-        password=encrypted_password
+        password=password.password
     )
     db.add(new_entry)
     db.commit()
@@ -58,7 +56,7 @@ def add_password(
     )
 
 
-# 🔹 Edytuj hasło
+# 🔹 Edytuj hasło (ciphertext gotowy z przeglądarki)
 @router.put("/{password_id}", response_model=PasswordOut)
 def update_password(
     password_id: int,
@@ -70,13 +68,13 @@ def update_password(
         PasswordEntry.id == password_id,
         PasswordEntry.user_id == current_user.id
     ).first()
-    
+
     if not item:
         raise HTTPException(status_code=404, detail="Hasło nie istnieje")
 
     item.service = updated.service
     item.login = updated.login
-    item.password = encrypt_text(updated.password)
+    item.password = updated.password
 
     db.commit()
     db.refresh(item)
@@ -100,41 +98,10 @@ def delete_password(
         PasswordEntry.id == password_id,
         PasswordEntry.user_id == current_user.id
     ).first()
-    
+
     if not entry:
         raise HTTPException(status_code=404, detail="Hasło nie znalezione")
-    
+
     db.delete(entry)
     db.commit()
     return {"message": "Password deleted"}
-
-
-# 🔹 Odszyfruj hasło (na podstawie klucza)
-@router.post("/decrypt", response_model=dict)
-def decrypt_via_key(
-    current_user: User = Depends(get_current_user),
-    payload: dict = Body(...)
-):
-    key = (payload.get("key") or "").strip()
-    encrypted = (payload.get("password") or "").strip()
-    
-    if not key or not encrypted:
-        raise HTTPException(status_code=400, detail="Brak klucza lub hasła")
-
-    # walidacja formatu klucza
-    try:
-        f = Fernet(key.encode())
-    except Exception:
-        raise HTTPException(
-            status_code=400,
-            detail="Zły format klucza (musi być 32B base64, 44 znaki, zwykle kończy się '=')"
-        )
-
-    # próba odszyfrowania
-    try:
-        plain = f.decrypt(encrypted.encode()).decode()
-        return {"decrypted": plain}
-    except InvalidToken:
-        raise HTTPException(status_code=400, detail="Klucz nie pasuje do tego zaszyfrowanego hasła")
-    except Exception:
-        raise HTTPException(status_code=400, detail="Niepowodzenie odszyfrowania")
