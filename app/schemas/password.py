@@ -3,12 +3,12 @@ from pydantic import BaseModel
 class PasswordCreate(BaseModel):
     service: str
     login: str
-    password: str  # opaque ciphertext (base64 IV+AES-GCM) z przeglądarki
+    password: str  # plaintext z formularza
 
 class PasswordOut(BaseModel):
     id: int
     service: str
     login: str
-    password: str  # opaque ciphertext - odszyfrowanie dzieje się w przeglądarce
+    password: str  # zwrócimy odszyfrowany tekst (na dev)
 
     model_config = {"from_attributes": True}
